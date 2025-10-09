@@ -1,3 +1,6 @@
 Flask==3.0.3
---find-links https://github.com/Huelse/SEAL-Python/releases/
-seal==4.1.1
+pandas
+numpy
+requests
+python-seal==4.1.1 
+gunicorn # ADD THIS LINE
