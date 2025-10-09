@@ -41,3 +41,9 @@ ENV PORT 8080
 # CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
 # If you are using a basic Flask server (less recommended for prod), use this:
 CMD ["python", "app.py"]
+
+# ... (rest of your Dockerfile content)
+
+# Command to run your Flask server with Gunicorn (assuming 'app' is the Flask instance in 'app.py')
+# This is much more reliable for Cloud Run.
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
