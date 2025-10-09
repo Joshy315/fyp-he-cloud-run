@@ -1,26 +1,29 @@
-# Use Python base image
-FROM python:3.10-slim
+# Stage 1: Build Stage (Includes C/C++ compilers for 'python-seal')
+FROM python:3.11-slim as builder
 
-# Install system dependencies (for building SEAL)
-RUN apt-get update && apt-get install -y cmake g++ wget git
+# Install system dependencies needed for compilation (CRITICAL)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy source code
+# Copy requirements and install Python dependencies
 WORKDIR /app
-COPY . .
-
-# Build and install Microsoft SEAL and SEAL-Python
-RUN git clone https://github.com/microsoft/SEAL.git && \
-    cd SEAL && cmake -S . -B build && cmake --build build && cmake --install build && \
-    cd .. && git clone https://github.com/Huelse/SEAL-Python.git && \
-    cd SEAL-Python && pip install .
-
-
-# Install Python dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose Cloud Run port
-ENV PORT=8080
-EXPOSE 8080
+# Stage 2: Final Run Stage (Lightweight and stable)
+FROM python:3.11-slim
 
-# Start server
+WORKDIR /app
+
+# Copy the compiled dependencies from the builder stage
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+
+# Copy the application code
+COPY . .
+
+# Set the Gunicorn command to run your Flask app ('app' instance in 'app.py')
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
