@@ -1,3 +1,3 @@
 Flask==3.0.3
-# This tells Cloud Build to find and install the same SEAL version
-seal==4.1.1 --find-links https://github.com/Huelse/SEAL-Python/releases/
+--find-links https://github.com/Huelse/SEAL-Python/releases/
+seal==4.1.1
