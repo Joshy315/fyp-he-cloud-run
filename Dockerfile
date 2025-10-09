@@ -1,9 +1,9 @@
 # Stage 1: Build Stage (Includes compilation tools)
-# Start with a full Python image that includes necessary build tools (like apt/dpkg)
+# Start with a full Python image that contains tools like apt/dpkg
 FROM python:3.11-slim as builder
 
-# 1. Install system-level dependencies for C/C++ compilation (Critical Step)
-# This installs tools like gcc, g++, and cmake, which SEAL needs.
+# 1. Install system-level dependencies for C/C++ compilation (CRITICAL)
+# These tools are necessary to compile the 'seal' library from source.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -15,22 +15,29 @@ RUN apt-get update && \
 WORKDIR /app
 COPY requirements.txt .
 
-# Install Python dependencies, including 'seal', which will now compile successfully.
-# The log suggests you are using a custom index for seal (https://github.com/Huelse/SEAL-Python/releases/)
-# Make sure your requirements.txt or pip command includes that link if necessary.
+# Install Python dependencies, including 'seal'. This step now has the required tools.
+# The `pip` command will automatically use the links specified in your requirements.txt.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Stage 2: Final Run Stage (Lightweight and secure)
-# Switch to a smaller, cleaner image for running the final application
+# Copy your application code (app.py, etc.)
+COPY . .
+
+# Stage 2: Final Run Stage (Lightweight for deployment)
+# Use a cleaner, smaller image for the final production container.
 FROM python:3.11-slim
 
 # Copy the compiled Python environment and application code from the builder stage
 WORKDIR /app
+# Copy installed dependencies (like the compiled SEAL library)
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY . .
+# Copy your application files (app.py, etc.)
+COPY --from=builder /app .
 
-# Cloud Run expects the app to listen on the port defined by this environment variable
+# Cloud Run requires the application to listen on the $PORT environment variable
 ENV PORT 8080
 
-# Command to run your application (adjust 'main.py' to your actual startup file)
-CMD ["python", "main.py"]
+# Command to run your Flask/FastAPI server (Assuming your main file is 'app.py')
+# If you are using Gunicorn, use this:
+# CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
+# If you are using a basic Flask server (less recommended for prod), use this:
+CMD ["python", "app.py"]
