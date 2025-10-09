@@ -1,4 +1,4 @@
-# Stage 1: Build Stage (Includes C/C++ compilers for 'python-seal')
+# Stage 1: Build Stage
 FROM python:3.11-slim as builder
 
 # Install system dependencies needed for compilation (CRITICAL)
@@ -6,8 +6,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
-    git && \
+    git \
+    python3-dev && \   # <-- ADD THIS LINE
     rm -rf /var/lib/apt/lists/*
+
 
 # Copy requirements and install Python dependencies
 WORKDIR /app
