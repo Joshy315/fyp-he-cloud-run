@@ -1,9 +1,7 @@
-# Stage 1: Build Stage (Includes compilation tools)
-# Start with a full Python image that contains tools like apt/dpkg
+# Stage 1: Build Stage (Includes C/C++ compilers for 'python-seal')
 FROM python:3.11-slim as builder
 
-# 1. Install system-level dependencies for C/C++ compilation (CRITICAL)
-# These tools are necessary to compile the 'seal' library from source.
+# Install system dependencies needed for python-seal (cmake, build-essential)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -11,39 +9,28 @@ RUN apt-get update && \
     git && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. Copy dependencies and install Python packages
+# Copy requirements and install Python dependencies
 WORKDIR /app
 COPY requirements.txt .
-
-# Install Python dependencies, including 'seal'. This step now has the required tools.
-# The `pip` command will automatically use the links specified in your requirements.txt.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your application code (app.py, etc.)
-COPY . .
+# =============================================================
 
-# Stage 2: Final Run Stage (Lightweight for deployment)
-# Use a cleaner, smaller image for the final production container.
+# Stage 2: Final Run Stage (Lightweight, only includes python libraries)
 FROM python:3.11-slim
 
-# Copy the compiled Python environment and application code from the builder stage
+# Set the working directory
 WORKDIR /app
-# Copy installed dependencies (like the compiled SEAL library)
+
+# Copy the compiled Python packages from the builder stage
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-# Copy your application files (app.py, etc.)
-COPY --from=builder /app .
 
-# Cloud Run requires the application to listen on the $PORT environment variable
-ENV PORT 8080
+# Copy the application code
+COPY . .
 
-# Command to run your Flask/FastAPI server (Assuming your main file is 'app.py')
-# If you are using Gunicorn, use this:
-# CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
-# If you are using a basic Flask server (less recommended for prod), use this:
-CMD ["python", "app.py"]
+# Set the execution environment variable
+ENV FLASK_APP=app.py
 
-# ... (rest of your Dockerfile content)
-
-# Command to run your Flask server with Gunicorn (assuming 'app' is the Flask instance in 'app.py')
-# This is much more reliable for Cloud Run.
+# Run the application using Gunicorn, binding to the port Cloud Run specifies
+# We use app:app because your Flask instance is named 'app' in 'app.py'
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
