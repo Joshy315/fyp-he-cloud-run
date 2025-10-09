@@ -1,36 +1,25 @@
-# Stage 1: Build Stage (Includes C/C++ compilers for 'python-seal')
-FROM python:3.11-slim as builder
+# Use Python base image
+FROM python:3.10-slim
 
-# Install system dependencies needed for python-seal (cmake, build-essential)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    git && \
-    rm -rf /var/lib/apt/lists/*
+# Install system dependencies (for building SEAL)
+RUN apt-get update && apt-get install -y cmake g++ wget git
 
-# Copy requirements and install Python dependencies
+# Copy source code
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# =============================================================
-
-# Stage 2: Final Run Stage (Lightweight, only includes python libraries)
-FROM python:3.11-slim
-
-# Set the working directory
-WORKDIR /app
-
-# Copy the compiled Python packages from the builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-
-# Copy the application code
 COPY . .
 
-# Set the execution environment variable
-ENV FLASK_APP=app.py
+# Build and install SEAL
+RUN git clone https://github.com/microsoft/SEAL.git && \
+    cd SEAL && cmake -S . -B build && cmake --build build && cd build && make install && \
+    cd .. && git clone https://github.com/Huelse/SEAL-Python.git && \
+    cd SEAL-Python && python3 setup.py install
 
-# Run the application using Gunicorn, binding to the port Cloud Run specifies
-# We use app:app because your Flask instance is named 'app' in 'app.py'
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose Cloud Run port
+ENV PORT=8080
+EXPOSE 8080
+
+# Start server
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 app:app
