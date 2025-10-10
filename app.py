@@ -8,7 +8,7 @@ import time
 
 app = Flask(__name__)
 
-# This function uses temporary files to load data correctly
+# This function must use files to load the data
 def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object"):
     bytes_data = base64.b64decode(encoded_string)
     with open(filename, 'wb') as f:
@@ -27,13 +27,11 @@ def deserialize_from_base64(encoded_string, target_class, context=None, filename
 def compute_average():
     data = request.json
     try:
-        # 1. Recreate SEAL Context
         parms = deserialize_from_base64(data['parms'], EncryptionParameters, filename="temp_s_parms")
         context = SEALContext(parms)
         ckks_encoder = CKKSEncoder(context)
         evaluator = Evaluator(context)
         
-        # 2. Deserialize all data from the client
         cloud_cipher = deserialize_from_base64(data['cipher_data'], Ciphertext, context, "temp_s_cipher")
         cloud_galois_keys = deserialize_from_base64(data['galois_keys'], GaloisKeys, context, "temp_s_galois")
         cloud_relin_keys = deserialize_from_base64(data['relin_keys'], RelinKeys, context, "temp_s_relin")
@@ -41,7 +39,6 @@ def compute_average():
         
         start_time = time.time()
         
-        # --- Heavy Homomorphic Computation ---
         rotated_ciphers = [evaluator.rotate_vector(cloud_cipher, i, cloud_galois_keys) for i in range(sample_size)]
         total_sum_cipher = evaluator.add_many(rotated_ciphers)
         
@@ -54,7 +51,6 @@ def compute_average():
         
         processing_time = (time.time() - start_time) * 1000
 
-        # 3. Serialize and return the result
         result_filename = "temp_s_result"
         avg_cipher.save(result_filename)
         with open(result_filename, 'rb') as f:
