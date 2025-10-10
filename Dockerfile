@@ -5,7 +5,6 @@ FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 # Install system dependencies required for building SEAL from source
-# build-essential for C/C++ compilers, cmake for SEAL
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -13,19 +12,22 @@ RUN apt-get update && \
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements.txt file into the container
-COPY requirements.txt .
+# Clone, initialize submodule, and install SEAL-Python in one robust step
+RUN git clone https://github.com/Huelse/SEAL-Python.git && \
+    cd SEAL-Python && \
+    git checkout v4.1.1-4 && \
+    git submodule update --init --recursive && \
+    pip install .
 
-# Install Python dependencies, including SEAL (which will now build from source)
-# --no-cache-dir to save space
+# Now, copy and install the other dependencies (Flask, gunicorn)
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your application code into the container
+# Copy the rest of your application code (app.py, etc.)
 COPY . .
 
 # Expose the port that the app runs on
 EXPOSE 8080
 
-# Define the command to run your app using gunicorn as specified in Procfile
-# (Cloud Run usually ignores Procfile if Dockerfile is present, so we specify here)
+# Define the command to run your app
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
