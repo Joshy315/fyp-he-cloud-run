@@ -1,3 +1,2 @@
 Flask==3.0.3
 gunicorn
-git+https://github.com/Huelse/SEAL-Python.git@v4.1.1-4
