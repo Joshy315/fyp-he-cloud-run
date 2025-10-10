@@ -12,10 +12,9 @@ RUN apt-get update && \
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Clone, initialize submodule, and install SEAL-Python in one robust step
-RUN git clone https://github.com/Huelse/SEAL-Python.git && \
+# Clone the specific tag, initialize the submodule, and install SEAL-Python
+RUN git clone --branch v4.1.1-4 https://github.com/Huelse/SEAL-Python.git && \
     cd SEAL-Python && \
-    git checkout v4.1.1-4 && \
     git submodule update --init --recursive && \
     pip install .
 
