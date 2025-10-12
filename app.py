@@ -16,10 +16,12 @@ def deserialize_from_base64(encoded_string, target_class, context=None, filename
     with open(filename, 'wb') as f:
         f.write(bytes_data)
     
-    new_object = target_class()
     if target_class == EncryptionParameters:
+        # Special handling: Construct with scheme_type first, then load
+        new_object = EncryptionParameters(scheme_type.ckks)
         new_object.load(filename)
     else:
+        new_object = target_class()
         new_object.load(context, filename)
     
     os.remove(filename)
