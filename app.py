@@ -7,6 +7,8 @@ import base64
 import time
 
 app = Flask(__name__)
+# Set the maximum request size to 16 MB
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1000 * 1000
 
 # This function must use files to load the data
 def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object"):
