@@ -12,13 +12,16 @@ RUN apt-get update && \
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy your application's requirements.txt
-COPY requirements.txt .
+# Clone the specific tag, initialize the submodule, and install SEAL-Python
+# CORRECTED TAG: v4.1.1
+RUN git clone --branch v4.1.1 https://github.com/Huelse/SEAL-Python.git && \
+    cd SEAL-Python && \
+    git submodule update --init --recursive && \
+    pip install .
 
-# Install all Python dependencies in a single, unified step.
-# This ensures everything is in the same, correct path.
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir "git+https://github.com/Huelse/SEAL-Python.git@v4.1.1-4#egg=seal"
+# Now, copy and install the other dependencies (Flask, gunicorn)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of your application code (app.py, etc.)
 COPY . .
