@@ -21,7 +21,7 @@ COPY requirements.txt .
 # Install application Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Clone and build SEAL-Python from source (use main for stability)
+# Clone and build SEAL-Python from source (use main for stability; static linking)
 RUN git clone --branch main https://github.com/Huelse/SEAL-Python.git seal-python && \
     cd seal-python && \
     git submodule update --init --recursive && \
@@ -29,23 +29,16 @@ RUN git clone --branch main https://github.com/Huelse/SEAL-Python.git seal-pytho
     cmake -S . -B build \
         -DSEAL_USE_MSGSL=OFF \
         -DSEAL_USE_ZLIB=OFF \
-        -DSEAL_USE_ZSTD=OFF \
-        -DBUILD_SHARED_LIBS=ON && \
+        -DSEAL_USE_ZSTD=OFF && \
     cmake --build build --parallel && \
     cd .. && \
-    # Copy the shared SEAL library to system path
-    cp SEAL/build/lib/libseal*.so /usr/local/lib/ && \
-    ldconfig && \
-    # Build and install the Python bindings
+    # Build and install the Python bindings (static link)
     python setup.py build_ext --inplace && \
     python setup.py install && \
     # Test import during build to catch issues early
     python -c "import seal; print('SEAL imported successfully during build')" && \
     cd .. && \
     rm -rf seal-python  # Clean up to reduce image size
-
-# Set LD_LIBRARY_PATH for runtime (safety net)
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 # Copy the rest of your application code (app.py, etc.)
 COPY . .
