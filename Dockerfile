@@ -21,8 +21,8 @@ COPY requirements.txt .
 # Install application Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Clone and build SEAL-Python from source at v4.0.0
-RUN git clone --branch v4.0.0 https://github.com/Huelse/SEAL-Python.git seal-python && \
+# Clone and build SEAL-Python from source (use main for stability)
+RUN git clone --branch main https://github.com/Huelse/SEAL-Python.git seal-python && \
     cd seal-python && \
     git submodule update --init --recursive && \
     cd SEAL && \
@@ -39,8 +39,13 @@ RUN git clone --branch v4.0.0 https://github.com/Huelse/SEAL-Python.git seal-pyt
     # Build and install the Python bindings
     python setup.py build_ext --inplace && \
     python setup.py install && \
+    # Test import during build to catch issues early
+    python -c "import seal; print('SEAL imported successfully during build')" && \
     cd .. && \
     rm -rf seal-python  # Clean up to reduce image size
+
+# Set LD_LIBRARY_PATH for runtime (safety net)
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 # Copy the rest of your application code (app.py, etc.)
 COPY . .
