@@ -12,13 +12,35 @@ RUN apt-get update && \
         git && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies for building SEAL-Python
+RUN pip install --no-cache-dir numpy pybind11
+
 # Copy your application's requirements.txt
 COPY requirements.txt .
 
-# Install all Python dependencies in a single, unified step.
-# This ensures everything is in the same, correct path.
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir "git+https://github.com/Huelse/SEAL-Python.git@v4.0.0#egg=seal"
+# Install application Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Clone and build SEAL-Python from source at v4.0.0
+RUN git clone --branch v4.0.0 https://github.com/Huelse/SEAL-Python.git seal-python && \
+    cd seal-python && \
+    git submodule update --init --recursive && \
+    cd SEAL && \
+    cmake -S . -B build \
+        -DSEAL_USE_MSGSL=OFF \
+        -DSEAL_USE_ZLIB=OFF \
+        -DSEAL_USE_ZSTD=OFF \
+        -DBUILD_SHARED_LIBS=ON && \
+    cmake --build build --parallel && \
+    cd .. && \
+    # Copy the shared SEAL library to system path
+    cp build/libseal*.so /usr/local/lib/ && \
+    ldconfig && \
+    # Build and install the Python bindings
+    python setup.py build_ext --inplace && \
+    python setup.py install && \
+    cd .. && \
+    rm -rf seal-python  # Clean up to reduce image size
 
 # Copy the rest of your application code (app.py, etc.)
 COPY . .
