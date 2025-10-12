@@ -34,7 +34,7 @@ RUN git clone --branch v4.0.0 https://github.com/Huelse/SEAL-Python.git seal-pyt
     cmake --build build --parallel && \
     cd .. && \
     # Copy the shared SEAL library to system path
-    cp build/libseal*.so /usr/local/lib/ && \
+    cp SEAL/build/lib/libseal*.so /usr/local/lib/ && \
     ldconfig && \
     # Build and install the Python bindings
     python setup.py build_ext --inplace && \
