@@ -1,3 +1,4 @@
+%%writefile app.py
 import os
 from flask import Flask, request, jsonify
 import seal
@@ -106,20 +107,19 @@ def compute_average():
         print(f"✅ Sum computed via {len(rotation_steps)} rotations")
         
         # =====================================================================
-        # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
+        # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE (NO RESCALE)
         # =====================================================================
-        scale = sum_cipher.scale()
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
-        division_plain = ckks_encoder.encode(division_vector, scale)
+        # ✅ FIXED: Encode with scale=1.0 to preserve input scale, avoid rescale
+        division_plain = ckks_encoder.encode(division_vector, 1.0)
         
-        print(f"   Dividing by {sample_size} (scale: {scale:.2e})")
+        print(f"   Dividing by {sample_size} (division scale: 1.0)")
         
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
-        # Relinearize and rescale
-        evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
-        evaluator.rescale_to_next_inplace(avg_cipher)
+        # ✅ No relinearize needed for multiply_plain (degree 1 preserved)
+        # ✅ No rescale needed (scale preserved ≈ input scale)
         
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
