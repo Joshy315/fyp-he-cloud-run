@@ -119,17 +119,17 @@ def compute_average_gcs():
             rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
             evaluator.add_inplace(sum_cipher, rotated)
         print(f"✅ Sum computed")
-        # --- Division (Match Scale + Set Scale) ---
+        # --- Division (Match Scale + Rescale) ---
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
-        division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())  # Encode at CT scale (avoids zeroing)
-        print(f"   Dividing by {sample_size} (encoded at CT scale)")
+        division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())
+        print(f"   Dividing by {sample_size}")
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
-        print("   Adjusting scale with set_scale...")
-        avg_cipher.set_scale(sum_cipher.scale())  # Approximates / CT.scale; matches original scale
+        
+        # Use rescale instead of set_scale
+        print("   Rescaling result...")
+        evaluator.rescale_to_next_inplace(avg_cipher)
         print("   Division complete.")
-        processing_time = (time.time() - start_time) * 1000
-        print(f"✅ Average computed in {processing_time:.2f} ms")
 
         # STEP 5: Serialize, Save locally, Upload result to GCS
         local_result_file = "/tmp/result.enc"
