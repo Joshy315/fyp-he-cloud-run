@@ -109,42 +109,50 @@ def compute_average_gcs():
         # We get sample_size from the small request now, but could also include in large payload
         print(f"✅ Loaded. Computing average of {sample_size} values...")
 
-       # STEP 4: Perform HE Computation (Same logic as before)
+      # STEP 4: Perform HE Computation (Same logic as before)
         start_time = time.time()
+        
         # --- Summation (Binary Tree) ---
-        sum_cipher = Ciphertext(cloud_cipher); rotation_steps = []; power = 1
-        while power < sample_size: rotation_steps.append(power); power *= 2
+        sum_cipher = Ciphertext(cloud_cipher)
+        rotation_steps = []
+        power = 1
+        while power < sample_size:
+            rotation_steps.append(power)
+            power *= 2
         print(f"   Using binary tree rotation steps: {rotation_steps}")
         for step in rotation_steps:
             rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
             evaluator.add_inplace(sum_cipher, rotated)
         print(f"✅ Sum computed")
+        
         # --- Division (Match Scale + Rescale) ---
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
         division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())
-        print(f"   Dividing by {sample_size}")
+        print(f"   Dividing by {sample_size} (encoded at CT scale)")
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
-        
-        # Use rescale instead of set_scale
         print("   Rescaling result...")
         evaluator.rescale_to_next_inplace(avg_cipher)
         print("   Division complete.")
+        
+        # Calculate processing time HERE (before serialization)
+        processing_time = (time.time() - start_time) * 1000
+        print(f"✅ Average computed in {processing_time:.2f} ms")
 
         # STEP 5: Serialize, Save locally, Upload result to GCS
         local_result_file = "/tmp/result.enc"
-        result_b64 = serialize_to_base64(avg_cipher, local_result_file) # Saves+compresses+encodes
+        result_b64 = serialize_to_base64(avg_cipher, local_result_file)
 
         # Need the bucket name - extract from input or use env var
         bucket_name = gcs_payload_path.split('/')[2]
         result_blob_name = f"he_results/{os.path.basename(gcs_payload_path).replace('_payload.json', '_result.enc')}"
 
-        # We need to save the SINGLE base64 string to a file to upload
+        # Save the base64 string to a file to upload
         with open(local_result_file, 'w') as f:
              f.write(result_b64)
 
         result_gcs_path = upload_result_to_gcs(bucket_name, local_result_file, result_blob_name)
-        os.remove(local_result_file) # Clean up local result file
+        os.remove(local_result_file)
 
         # STEP 6: Return GCS path of the result
         return jsonify({
@@ -155,7 +163,8 @@ def compute_average_gcs():
 
     except Exception as e:
         print(f"❌ Error processing GCS request: {str(e)}")
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e), 'type': type(e).__name__}), 500
 
 # --- Keep your existing /health endpoint ---
