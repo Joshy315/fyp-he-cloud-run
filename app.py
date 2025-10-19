@@ -5,12 +5,14 @@ from seal import *
 import base64
 import time
 import numpy as np
-import zlib
+import zlib  # ✅ Added for compression
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # ✅ Increased to 32 MB
 
 def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object"):
+    """Deserialize SEAL objects from base64-encoded strings using file I/O"""
+    # ✅ Decompress first
     compressed_data = base64.b64decode(encoded_string)
     bytes_data = zlib.decompress(compressed_data)
     
@@ -28,102 +30,146 @@ def deserialize_from_base64(encoded_string, target_class, context=None, filename
     return new_object
 
 def serialize_to_base64(seal_object, filename="temp_server_result"):
+    """Serialize SEAL objects to base64-encoded strings with compression"""
     seal_object.save(filename)
     with open(filename, 'rb') as f:
         bytes_data = f.read()
     os.remove(filename)
     
+    # ✅ Compress before encoding
     compressed_data = zlib.compress(bytes_data, level=9)
     return base64.b64encode(compressed_data).decode('utf-8')
 
 @app.route('/compute_average', methods=['POST'])
 def compute_average():
+    """
+    Compute average of encrypted CKKS data with compression support
+    """
     data = request.json
     
+    # Validate required fields
     required_fields = ['parms', 'cipher_data', 'galois_keys', 'relin_keys', 'sample_size']
     if not all(k in data for k in required_fields):
-        return jsonify({'error': f'Missing: {required_fields}'}), 400
+        return jsonify({'error': f'Missing required fields. Need: {required_fields}'}), 400
     
     try:
-        print("📦 Deserializing...")
+        print("📦 Deserializing compressed parameters...")
         
+        # Log payload sizes for debugging
+        print(f"   parms size: {len(data['parms']) / 1024:.1f} KB")
+        print(f"   cipher_data size: {len(data['cipher_data']) / 1024:.1f} KB")
+        print(f"   galois_keys size: {len(data['galois_keys']) / 1024:.1f} KB")
+        print(f"   relin_keys size: {len(data['relin_keys']) / 1024:.1f} KB")
+        
+        # Deserialize with decompression
         parms = deserialize_from_base64(data['parms'], EncryptionParameters, filename="temp_s_parms")
         context = SEALContext(parms)
         
         if not context.parameters_set():
-            return jsonify({'error': 'Invalid parameters'}), 400
+            return jsonify({'error': 'Invalid encryption parameters'}), 400
         
-        encoder = CKKSEncoder(context)
+        ckks_encoder = CKKSEncoder(context)
         evaluator = Evaluator(context)
-        slot_count = encoder.slot_count()
+        slot_count = ckks_encoder.slot_count()
         
-        print(f"✅ Context: {parms.poly_modulus_degree()} poly, {slot_count} slots")
+        print(f"✅ Context created. Slot count: {slot_count}")
         
+        # Load encrypted data and keys
+        print("🔑 Loading encrypted data and keys...")
         cloud_cipher = deserialize_from_base64(data['cipher_data'], Ciphertext, context, "temp_s_cipher")
-        galois_keys = deserialize_from_base64(data['galois_keys'], GaloisKeys, context, "temp_s_galois")
-        relin_keys = deserialize_from_base64(data['relin_keys'], RelinKeys, context, "temp_s_relin")
+        cloud_galois_keys = deserialize_from_base64(data['galois_keys'], GaloisKeys, context, "temp_s_galois")
+        cloud_relin_keys = deserialize_from_base64(data['relin_keys'], RelinKeys, context, "temp_s_relin")
         
         sample_size = int(data['sample_size'])
-        print(f"✅ Computing average of {sample_size} values")
+        print(f"✅ Loaded. Computing average of {sample_size} values...")
         
         start_time = time.time()
         
-        # Rotation-sum
+        # =====================================================================
+        # COMPUTE SUM USING ROTATION-AND-ADD
+        # =====================================================================
         sum_cipher = Ciphertext(cloud_cipher)
+        
+        # Binary tree reduction for efficiency
         rotation_steps = []
         power = 1
         while power < sample_size:
             rotation_steps.append(power)
             power *= 2
         
+        print(f"   Using rotation steps: {rotation_steps}")
+        
         for step in rotation_steps:
-            rotated = evaluator.rotate_vector(sum_cipher, step, galois_keys)
+            rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
             evaluator.add_inplace(sum_cipher, rotated)
         
-        print(f"✅ Sum computed")
+        print(f"✅ Sum computed via {len(rotation_steps)} rotations")
         
-        # Check levels
-        context_data = context.get_context_data(sum_cipher.parms_id())
-        chain_index = context_data.chain_index()
-        current_scale = sum_cipher.scale()
-        
-        if chain_index == 0:
-            return jsonify({'error': 'Not enough levels', 'type': 'LevelError'}), 400
-        
-        # Division
+        # =====================================================================
+        # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
+        # =====================================================================
+        scale = sum_cipher.scale()
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
-        division_plain = encoder.encode(division_vector, current_scale)
+        division_plain = ckks_encoder.encode(division_vector, scale)
+        
+        print(f"   Dividing by {sample_size} (scale: {scale:.2e})")
         
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
-        evaluator.relinearize_inplace(avg_cipher, relin_keys)
+        
+        # Relinearize and rescale
+        evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
         evaluator.rescale_to_next_inplace(avg_cipher)
         
         processing_time = (time.time() - start_time) * 1000
-        print(f"✅ Done in {processing_time:.2f} ms")
+        print(f"✅ Average computed in {processing_time:.2f} ms")
         
+        # =====================================================================
+        # SERIALIZE AND RETURN WITH COMPRESSION
+        # =====================================================================
         encoded_result = serialize_to_base64(avg_cipher, "temp_s_result")
+        
+        print(f"📦 Result size (compressed): {len(encoded_result) / 1024:.1f} KB")
         
         return jsonify({
             'encrypted_result': encoded_result,
             'cloud_processing_time_ms': processing_time
         })
         
+    except zlib.error as e:
+        print(f"❌ Decompression error: {str(e)}")
+        return jsonify({
+            'error': 'Decompression failed. Client may not have sent compressed data.',
+            'type': 'DecompressionError'
+        }), 400
+        
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    """Health check endpoint for Cloud Run"""
     try:
         from seal import EncryptionParameters, scheme_type
-        return jsonify({'status': 'healthy', 'seal_available': True}), 200
+        return jsonify({
+            'status': 'healthy',
+            'seal_available': True,
+            'compression_enabled': True
+        }), 200
     except Exception as e:
-        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e)
+        }), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
-    print(f"🚀 Server starting on port {port}")
+    print(f"🚀 Starting server on port {port}...")
+    print(f"✅ Compression enabled (zlib)")
     app.run(debug=False, host='0.0.0.0', port=port)
