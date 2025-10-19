@@ -129,7 +129,7 @@ def compute_average_gcs():
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
-        avg_cipher.scale(sum_cipher.scale()) # Match scale
+        avg_cipher.set_scale(sum_cipher.scale()) # ✅ FIXED: Use set_scale
         print("   Division complete.")
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
