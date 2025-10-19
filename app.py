@@ -86,8 +86,11 @@ def compute_average():
         start_time = time.time()
         
         # =====================================================================
-        # COMPUTE SUM USING ROTATION-AND-ADD
+        # COMPUTE SUM USING ROTATION-AND-ADD (NO RESCALING)
         # =====================================================================
+        # ✅ CRITICAL: Rotations and additions do NOT consume levels
+        # Only multiply operations consume levels
+        
         sum_cipher = Ciphertext(cloud_cipher)
         
         # Binary tree reduction for efficiency
@@ -99,39 +102,44 @@ def compute_average():
         
         print(f"   Using rotation steps: {rotation_steps}")
         
+        # ✅ KEY POINT: rotate + add do NOT change scale or consume levels
         for step in rotation_steps:
             rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
             evaluator.add_inplace(sum_cipher, rotated)
         
         print(f"✅ Sum computed via {len(rotation_steps)} rotations")
         
+        # Check levels AFTER rotation-sum
+        context_data = context.get_context_data(sum_cipher.parms_id())
+        chain_index = context_data.chain_index()
+        current_scale = sum_cipher.scale()
+        
+        print(f"   Chain index after sum: {chain_index}")
+        print(f"   Scale after sum: {current_scale:.2e}")
+        
         # =====================================================================
         # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
         # =====================================================================
-        scale = sum_cipher.scale()
-        
-        # ✅ CRITICAL: Check if we have enough levels left
-        context_data = context.get_context_data(sum_cipher.parms_id())
-        chain_index = context_data.chain_index()
-        
-        print(f"   Current chain index: {chain_index}")
-        print(f"   Current scale: {scale:.2e}")
+        # ✅ This is the ONLY operation that consumes a level
         
         if chain_index == 0:
             return jsonify({
-                'error': 'Not enough levels for division. Ciphertext already at lowest level.',
+                'error': 'Not enough levels for division. Need at least chain_index=1.',
                 'type': 'LevelError'
             }), 400
         
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
         
-        # ✅ Encode with current scale
-        division_plain = ckks_encoder.encode(division_vector, scale)
+        # ✅ Use CURRENT scale (not a new scale)
+        division_plain = ckks_encoder.encode(division_vector, current_scale)
         
-        print(f"   Dividing by {sample_size} (scale: {scale:.2e})")
+        print(f"   Dividing by {sample_size}")
         
+        # This multiply_plain will change scale from S to S²
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
+        
+        print(f"   Scale after multiply_plain: {avg_cipher.scale():.2e}")
         
         # Relinearize and rescale
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
