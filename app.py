@@ -16,10 +16,15 @@ app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 storage_client = storage.Client()
 
 # --- HELPER FUNCTIONS ---
-def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object"):
+def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object", is_compressed=True):
     """Deserialize SEAL objects from base64-encoded strings using file I/O"""
-    compressed_data = base64.b64decode(encoded_string)
-    bytes_data = zlib.decompress(compressed_data)
+    decoded_data = base64.b64decode(encoded_string)
+    
+    if is_compressed:
+        bytes_data = zlib.decompress(decoded_data)
+    else:
+        bytes_data = decoded_data
+        
     with open(filename, 'wb') as f:
         f.write(bytes_data)
     if target_class == EncryptionParameters:
@@ -93,20 +98,29 @@ def compute_average_gcs():
         print("✅ Payload loaded.")
 
         # STEP 3: Deserialize parameters and keys
-        print("📦 Deserializing compressed parameters from payload...")
-        parms = deserialize_from_base64(payload['parms'], EncryptionParameters, filename="temp_s_parms")
+        print("📦 Deserializing parameters from payload...")
+        parms = deserialize_from_base64(payload['parms'], EncryptionParameters, filename="temp_s_parms", is_compressed=False)
         context = SEALContext(parms)
         if not context.parameters_set():
             return jsonify({'error': 'Invalid params'}), 400
+        
+        # DEBUG: Print context information
+        print(f"🔍 Server context info:")
+        print(f"   Poly modulus degree: {parms.poly_modulus_degree()}")
+        print(f"   Coeff modulus sizes: {[mod.bit_count() for mod in parms.coeff_modulus()]}")
+        print(f"   First parms_id: {context.first_parms_id()}")
+        print(f"   Key parms_id: {context.key_parms_id()}")
+        print(f"   Last parms_id: {context.last_parms_id()}")
+        
         ckks_encoder = CKKSEncoder(context)
         evaluator = Evaluator(context)
         slot_count = ckks_encoder.slot_count()
         print(f"✅ Context created. Slot count: {slot_count}")
 
         print("🔑 Loading encrypted data and keys from payload...")
-        cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, context, "temp_s_cipher")
-        cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, context, "temp_s_galois")
-        cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, context, "temp_s_relin")
+        cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, context, "temp_s_cipher", is_compressed=True)
+        cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, context, "temp_s_galois", is_compressed=True)
+        cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, context, "temp_s_relin", is_compressed=True)
         print(f"✅ Loaded. Computing average of {sample_size} values...")
 
         # STEP 4: Perform HE Computation
@@ -141,11 +155,6 @@ def compute_average_gcs():
 
         # STEP 5: Serialize result and upload to GCS
         print("📦 Serializing result...")
-        
-        # IMPORTANT: Check the parms_id before saving
-        print(f"   Result parms_id: {avg_cipher.parms_id()}")
-        print(f"   Context first parms_id: {context.first_parms_id()}")
-        
         local_result_file = "/tmp/result.enc"
         
         # Save the ciphertext to a temporary file first
@@ -175,7 +184,7 @@ def compute_average_gcs():
         os.remove(local_result_file)
         
         print(f"✅ Result uploaded to {result_gcs_path}")
-        
+
         # STEP 6: Return GCS path of the result
         return jsonify({
             'status': 'complete',
