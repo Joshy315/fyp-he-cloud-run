@@ -9,7 +9,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
-        git && \
+        git \
+        zlib1g-dev \
+        libzstd-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies for building SEAL-Python
@@ -21,24 +23,22 @@ COPY requirements.txt .
 # Install application Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Clone and build SEAL-Python from source (use main for stability; static linking)
+# Clone and build SEAL-Python from source with COMPRESSION ENABLED
 RUN git clone --branch main https://github.com/Huelse/SEAL-Python.git seal-python && \
     cd seal-python && \
     git submodule update --init --recursive && \
     cd SEAL && \
     cmake -S . -B build \
         -DSEAL_USE_MSGSL=OFF \
-        -DSEAL_USE_ZLIB=OFF \
-        -DSEAL_USE_ZSTD=OFF && \
+        -DSEAL_USE_ZLIB=ON \
+        -DSEAL_USE_ZSTD=ON && \
     cmake --build build --parallel && \
     cd .. && \
-    # Build and install the Python bindings (static link)
     python setup.py build_ext --inplace && \
     python setup.py install && \
-    # Test import during build to catch issues early
-    python -c "import seal; print('SEAL imported successfully during build')" && \
+    python -c "import seal; print('SEAL imported successfully with compression enabled')" && \
     cd .. && \
-    rm -rf seal-python  # Clean up to reduce image size
+    rm -rf seal-python
 
 # Copy the rest of your application code (app.py, etc.)
 COPY . .
@@ -47,4 +47,4 @@ COPY . .
 EXPOSE 8080
 
 # Define the command to run your app
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 120 app:app
