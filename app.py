@@ -6,64 +6,67 @@ import base64
 import time
 import numpy as np
 import zlib
-from google.cloud import storage # ✅ GCS Library
-import json # ✅ For loading payload file
+from google.cloud import storage
+import json
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024 # Limit for the *small* request
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 
 # ✅ GCS Client (initialize once)
 storage_client = storage.Client()
 
-# --- HELPER FUNCTIONS (Keep your existing compression helpers) ---
+# --- HELPER FUNCTIONS ---
 def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object"):
     """Deserialize SEAL objects from base64-encoded strings using file I/O"""
     compressed_data = base64.b64decode(encoded_string)
     bytes_data = zlib.decompress(compressed_data)
-    with open(filename, 'wb') as f: f.write(bytes_data)
+    with open(filename, 'wb') as f:
+        f.write(bytes_data)
     if target_class == EncryptionParameters:
-        new_object = EncryptionParameters(scheme_type.ckks); new_object.load(filename)
+        new_object = EncryptionParameters(scheme_type.ckks)
+        new_object.load(filename)
     else:
-        new_object = target_class(); new_object.load(context, filename)
+        new_object = target_class()
+        new_object.load(context, filename)
     os.remove(filename)
     return new_object
 
 def serialize_to_base64(seal_object, filename="temp_server_result"):
     """Serialize SEAL objects to base64-encoded strings with compression"""
     seal_object.save(filename)
-    with open(filename, 'rb') as f: bytes_data = f.read()
+    with open(filename, 'rb') as f:
+        bytes_data = f.read()
     os.remove(filename)
     compressed_data = zlib.compress(bytes_data, level=9)
     return base64.b64encode(compressed_data).decode('utf-8')
 
-# ✅ GCS Helper: Upload result file
+def download_payload_from_gcs(gcs_uri, destination_file_name="/tmp/payload.json"):
+    """Downloads the large payload file from GCS."""
+    try:
+        print(f"📥 Downloading payload from {gcs_uri}...")
+        bucket_name = gcs_uri.split('/')[2]
+        blob_name = '/'.join(gcs_uri.split('/')[3:])
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.download_to_filename(destination_file_name)
+        print(f"✅ Payload downloaded to {destination_file_name}")
+        return destination_file_name
+    except Exception as e:
+        print(f"❌ GCS Download Failed: {e}")
+        raise
+
 def upload_result_to_gcs(bucket_name, source_file_name, destination_blob_name):
     """Uploads the result file to GCS."""
     try:
         print(f"📤 Uploading result to gs://{bucket_name}/{destination_blob_name}...")
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(destination_blob_name)
-        # Set content type for binary data
-        blob.upload_from_filename(source_file_name, content_type='application/octet-stream')  # ← NEW LINE
+        blob.upload_from_filename(source_file_name, content_type='application/octet-stream')
         print(f"✅ Result uploaded.")
         return f"gs://{bucket_name}/{destination_blob_name}"
     except Exception as e:
         print(f"❌ GCS Upload Failed: {e}")
         raise
-
-# ✅ GCS Helper: Upload result file
-def upload_result_to_gcs(bucket_name, source_file_name, destination_blob_name):
-    """Uploads the result file to GCS."""
-    try:
-        print(f"📤 Uploading result to gs://{bucket_name}/{destination_blob_name}...")
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(destination_blob_name)
-        blob.upload_from_filename(source_file_name)
-        print(f"✅ Result uploaded.")
-        return f"gs://{bucket_name}/{destination_blob_name}"
-    except Exception as e:
-        print(f"❌ GCS Upload Failed: {e}")
-        raise # Re-raise exception
 
 # ✅ NEW Endpoint for GCS workflow
 @app.route('/compute_average_gcs', methods=['POST'])
@@ -73,7 +76,7 @@ def compute_average_gcs():
     """
     small_request_data = request.json
     gcs_payload_path = small_request_data.get('gcs_payload_path')
-    sample_size = small_request_data.get('sample_size', 0) # Get sample_size if sent
+    sample_size = small_request_data.get('sample_size', 0)
 
     if not gcs_payload_path:
         return jsonify({'error': 'Missing gcs_payload_path in request'}), 400
@@ -86,15 +89,17 @@ def compute_average_gcs():
         print("📦 Loading payload from downloaded file...")
         with open(local_payload_file, 'r') as f:
             payload = json.load(f)
-        os.remove(local_payload_file) # Clean up downloaded file
+        os.remove(local_payload_file)
         print("✅ Payload loaded.")
 
-        # STEP 3: Deserialize parameters and keys (same as before)
+        # STEP 3: Deserialize parameters and keys
         print("📦 Deserializing compressed parameters from payload...")
         parms = deserialize_from_base64(payload['parms'], EncryptionParameters, filename="temp_s_parms")
         context = SEALContext(parms)
-        if not context.parameters_set(): return jsonify({'error': 'Invalid params'}), 400
-        ckks_encoder = CKKSEncoder(context); evaluator = Evaluator(context)
+        if not context.parameters_set():
+            return jsonify({'error': 'Invalid params'}), 400
+        ckks_encoder = CKKSEncoder(context)
+        evaluator = Evaluator(context)
         slot_count = ckks_encoder.slot_count()
         print(f"✅ Context created. Slot count: {slot_count}")
 
@@ -102,10 +107,9 @@ def compute_average_gcs():
         cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, context, "temp_s_cipher")
         cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, context, "temp_s_galois")
         cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, context, "temp_s_relin")
-        # We get sample_size from the small request now, but could also include in large payload
         print(f"✅ Loaded. Computing average of {sample_size} values...")
 
-      # STEP 4: Perform HE Computation (Same logic as before)
+        # STEP 4: Perform HE Computation
         start_time = time.time()
         
         # --- Summation (Binary Tree) ---
@@ -131,13 +135,12 @@ def compute_average_gcs():
         evaluator.rescale_to_next_inplace(avg_cipher)
         print("   Division complete.")
         
-        # Calculate processing time HERE (before serialization)
+        # Calculate processing time
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
 
         # STEP 5: Serialize result and upload to GCS
         print("📦 Serializing result...")
-        # Save the ciphertext directly to binary file (compressed)
         local_result_file = "/tmp/result.enc"
         avg_cipher.save(local_result_file)
         
@@ -172,14 +175,21 @@ def compute_average_gcs():
         traceback.print_exc()
         return jsonify({'error': str(e), 'type': type(e).__name__}), 500
 
-# --- Keep your existing /health endpoint ---
+# --- Health check endpoint ---
 @app.route('/health', methods=['GET'])
 def health_check():
     try:
         from seal import EncryptionParameters, scheme_type
-        return jsonify({'status': 'healthy','seal_available': True, 'compression_enabled': True}), 200
+        return jsonify({
+            'status': 'healthy',
+            'seal_available': True,
+            'compression_enabled': True
+        }), 200
     except Exception as e:
-        return jsonify({'status': 'unhealthy','error': str(e)}), 500
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e)
+        }), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
