@@ -80,16 +80,25 @@ def compute_average():
         start_time = time.time()
         
         # =====================================================================
-        # COMPUTE SUM USING ROTATIONS OF ORIGINAL CIPHERTEXT
+        # ✅ FIX: COMPUTE SUM USING EFFICIENT BINARY TREE ROTATION-AND-ADD
         # =====================================================================
         sum_cipher = Ciphertext(cloud_cipher)
         
-        print(f"   Computing sum with {sample_size-1} rotations...")
-        for i in range(1, sample_size):
-            rotated = evaluator.rotate_vector(cloud_cipher, i, cloud_galois_keys)
-            evaluator.add_inplace(sum_cipher, rotated)
+        # Binary tree reduction for efficiency
+        rotation_steps = []
+        power = 1
+        while power < sample_size:
+            rotation_steps.append(power)
+            power *= 2
         
-        print(f"✅ Sum computed in slot 0")
+        print(f"   Using binary tree rotation steps: {rotation_steps}")
+        
+        # Perform the log(N) rotations and additions
+        for step in rotation_steps:
+            rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys) # Rotate the *running sum*
+            evaluator.add_inplace(sum_cipher, rotated) # Add back to the running sum
+        
+        print(f"✅ Sum computed via {len(rotation_steps)} rotations (binary tree)")
         
         # =====================================================================
         # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
@@ -97,15 +106,22 @@ def compute_average():
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
 
-        # Encode divisor with scale 1.0 to avoid scale growth
-        division_plain = ckks_encoder.encode(division_vector, 1.0)
+        # Get the parms_id (level) from the sum_cipher.
+        sum_cipher_parms_id = sum_cipher.parms_id()
+
+        # Encode the divisor with scale 1.0 AND at the correct level.
+        division_plain = ckks_encoder.encode(division_vector, sum_cipher_parms_id, 1.0)
         
-        print(f"   Dividing by {sample_size} (using scale=1.0)")
+        print(f"   Dividing by {sample_size} (using scale=1.0 trick at correct level)")
         
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
+        # Relinearization is needed after multiply_plain
         print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
+
+        # Set the scale to match the input, as it should be unchanged.
+        avg_cipher.scale(sum_cipher.scale())
         
         print("   Division complete.")
         
