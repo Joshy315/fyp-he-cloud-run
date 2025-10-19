@@ -36,24 +36,20 @@ def serialize_to_base64(seal_object, filename="temp_server_result"):
     compressed_data = zlib.compress(bytes_data, level=9)
     return base64.b64encode(compressed_data).decode('utf-8')
 
-# ✅ GCS Helper: Download payload file
-def download_payload_from_gcs(gcs_uri, destination_file_name="/tmp/payload.json"):
-    """Downloads the large payload file from GCS."""
+# ✅ GCS Helper: Upload result file
+def upload_result_to_gcs(bucket_name, source_file_name, destination_blob_name):
+    """Uploads the result file to GCS."""
     try:
-        print(f"📥 Downloading payload from {gcs_uri}...")
-        bucket_name = gcs_uri.split('/')[2]
-        blob_name = '/'.join(gcs_uri.split('/')[3:])
+        print(f"📤 Uploading result to gs://{bucket_name}/{destination_blob_name}...")
         bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(blob_name)
-        blob.download_to_filename(destination_file_name)
-        print(f"✅ Payload downloaded to {destination_file_name}")
-        # Clean up the payload blob after downloading
-        # blob.delete() 
-        # print(f"Deleted blob: {blob_name}")
-        return destination_file_name
+        blob = bucket.blob(destination_blob_name)
+        # Set content type for binary data
+        blob.upload_from_filename(source_file_name, content_type='application/octet-stream')  # ← NEW LINE
+        print(f"✅ Result uploaded.")
+        return f"gs://{bucket_name}/{destination_blob_name}"
     except Exception as e:
-        print(f"❌ GCS Download Failed: {e}")
-        raise # Re-raise exception to signal failure
+        print(f"❌ GCS Upload Failed: {e}")
+        raise
 
 # ✅ GCS Helper: Upload result file
 def upload_result_to_gcs(bucket_name, source_file_name, destination_blob_name):
