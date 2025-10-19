@@ -80,23 +80,16 @@ def compute_average():
         start_time = time.time()
         
         # =====================================================================
-        # COMPUTE SUM USING ROTATION-AND-ADD
+        # COMPUTE SUM USING ROTATIONS OF ORIGINAL CIPHERTEXT
         # =====================================================================
         sum_cipher = Ciphertext(cloud_cipher)
         
-        rotation_steps = []
-        power = 1
-        while power < sample_size:
-            rotation_steps.append(power)
-            power *= 2
-        
-        print(f"   Using rotation steps: {rotation_steps}")
-        
-        for step in rotation_steps:
-            rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
+        print(f"   Computing sum with {sample_size-1} rotations...")
+        for i in range(1, sample_size):
+            rotated = evaluator.rotate_vector(cloud_cipher, i, cloud_galois_keys)
             evaluator.add_inplace(sum_cipher, rotated)
         
-        print(f"✅ Sum computed via {len(rotation_steps)} rotations")
+        print(f"✅ Sum computed in slot 0")
         
         # =====================================================================
         # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
@@ -104,17 +97,17 @@ def compute_average():
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
 
-        # Encode divisor with scale 1.0 to avoid scale explosion
+        # Encode divisor with scale 1.0 to avoid scale growth
         division_plain = ckks_encoder.encode(division_vector, 1.0)
         
-        print(f"   Dividing by {sample_size} (encoded at scale=1.0)")
+        print(f"   Dividing by {sample_size} (using scale=1.0)")
         
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
         print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
         
-        print("   Division complete (no rescale needed).")
+        print("   Division complete.")
         
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
