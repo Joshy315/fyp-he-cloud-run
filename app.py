@@ -8,17 +8,9 @@ import numpy as np
 import zlib
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB for key upload
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB
 
-# ✅ GLOBAL KEY CACHE
-GLOBAL_CACHE = {
-    'context': None,
-    'galois_keys': None,
-    'relin_keys': None,
-    'encoder': None,
-    'evaluator': None,
-    'slot_count': None
-}
+# No global cache - we'll receive everything per request
 
 def deserialize_from_base64(encoded_string, target_class, context=None, filename="temp_server_object"):
     """Deserialize compressed SEAL objects"""
