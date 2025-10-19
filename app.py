@@ -69,12 +69,16 @@ def setup_keys():
         if not context.parameters_set():
             return jsonify({'error': 'Invalid parameters'}), 400
         
-        # ✅ Verify 4096 configuration
+        # ✅ Verify 4096 configuration (accept any valid 4096 config)
         poly_degree = parms.poly_modulus_degree()
+        coeff_mod = parms.coeff_modulus()
+        prime_bits = [mod.bit_count() for mod in coeff_mod]
+        
         print(f"   Poly degree: {poly_degree}")
+        print(f"   Prime bits: {prime_bits}")
         
         if poly_degree != 4096:
-            return jsonify({'error': f'Expected 4096, got {poly_degree}'}), 400
+            return jsonify({'error': f'Expected 4096, got {poly_degree}', 'type': 'ConfigMismatch'}), 400
         
         galois_keys = deserialize_from_base64(data['galois_keys'], GaloisKeys, context, "temp_setup_galois")
         relin_keys = deserialize_from_base64(data['relin_keys'], RelinKeys, context, "temp_setup_relin")
