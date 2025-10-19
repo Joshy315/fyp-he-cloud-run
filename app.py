@@ -104,20 +104,18 @@ def compute_average():
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
 
-        # ✅ FIX: Encode the divisor with scale 1.0 (no ParmsID needed, as level is still full after adds/rotates)
-        division_plain = ckks_encoder.encode(division_vector, 1.0)
+        # Encode divisor at same scale as sum, then rescale after multiply
+        division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())
         
-        print(f"   Dividing by {sample_size} (using scale=1.0)")
+        print(f"   Dividing by {sample_size} (encoded at same scale, will rescale)")
         
-        # This will now work.
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
-        # ✅ FIX: multiply_plain *does* increase the degree, so relinearization is required.
         print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
-
-        # ✅ Set the scale to match the input, as it should be unchanged.
-        avg_cipher.scale(sum_cipher.scale())
+        
+        print("   Rescaling...")
+        evaluator.rescale_to_next_inplace(avg_cipher)
         
         print("   Division complete.")
         
