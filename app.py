@@ -104,7 +104,7 @@ def compute_average_gcs():
         if not context.parameters_set():
             return jsonify({'error': 'Invalid params'}), 400
         
-        # DEBUG: Print context information (removed incompatible methods)
+        # DEBUG: Print context information
         print(f"🔍 Server context info:")
         print(f"   Poly modulus degree: {parms.poly_modulus_degree()}")
         print(f"   Coeff modulus sizes: {[mod.bit_count() for mod in parms.coeff_modulus()]}")
@@ -150,11 +150,11 @@ def compute_average_gcs():
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
 
-        # STEP 5: Serialize result and upload to GCS
+        # STEP 5: Serialize result ciphertext (NO DECRYPTION ON SERVER)
         print("📦 Serializing result...")
         local_result_file = "/tmp/result.enc"
         
-        # Save the ciphertext to a temporary file first
+        # Save the ciphertext
         temp_seal_file = "/tmp/result_seal.bin"
         avg_cipher.save(temp_seal_file)
         
@@ -165,31 +165,54 @@ def compute_average_gcs():
         
         print(f"   SEAL result size: {len(seal_bytes)} bytes")
         
-        # Compress the SEAL binary
+        # Compress and encode to base64
         compressed_data = zlib.compress(seal_bytes, level=9)
+        result_b64 = base64.b64encode(compressed_data).decode('utf-8')
         print(f"   Compressed size: {len(compressed_data)} bytes")
+        print(f"   Base64 size: {len(result_b64)} chars")
         
-        # Write compressed data to the upload file
-        with open(local_result_file, 'wb') as f:
-            f.write(compressed_data)
+        # ALSO serialize the server's parameters
+        parms_file = "/tmp/server_parms.bin"
+        parms.save(parms_file)
+        with open(parms_file, 'rb') as f:
+            parms_bytes = f.read()
+        os.remove(parms_file)
+        server_parms_b64 = base64.b64encode(parms_bytes).decode('utf-8')
         
-        # Upload the compressed binary file
-        bucket_name = gcs_payload_path.split('/')[2]
-        result_blob_name = f"he_results/{os.path.basename(gcs_payload_path).replace('_payload.json', '_result.enc')}"
-        
-        result_gcs_path = upload_result_to_gcs(bucket_name, local_result_file, result_blob_name)
-        os.remove(local_result_file)
-        
-        print(f"✅ Result uploaded to {result_gcs_path}")
+        print(f"✅ Result serialized")
 
-        # STEP 6: Return GCS path of the result
-        return jsonify({
-            'status': 'complete',
-            'result_gcs_path': result_gcs_path,
-            'cloud_processing_time_ms': processing_time,
-            'result_size_bytes': len(seal_bytes),
-            'compressed_size_bytes': len(compressed_data)
-        })
+        # STEP 6: Return result directly in JSON (if small enough)
+        # Check if it fits in response
+        total_size = len(result_b64) + len(server_parms_b64)
+        if total_size < 30_000_000:  # 30MB limit
+            print(f"   Returning result directly (total: {total_size/1024:.1f} KB)")
+            return jsonify({
+                'status': 'complete',
+                'result_data': result_b64,
+                'server_params': server_parms_b64,
+                'cloud_processing_time_ms': processing_time,
+                'result_size_bytes': len(seal_bytes),
+                'compressed_size_bytes': len(compressed_data)
+            })
+        else:
+            # If too large, use GCS
+            print(f"   Result too large, uploading to GCS...")
+            with open(local_result_file, 'wb') as f:
+                f.write(compressed_data)
+            
+            bucket_name = gcs_payload_path.split('/')[2]
+            result_blob_name = f"he_results/{os.path.basename(gcs_payload_path).replace('_payload.json', '_result.enc')}"
+            result_gcs_path = upload_result_to_gcs(bucket_name, local_result_file, result_blob_name)
+            os.remove(local_result_file)
+            
+            return jsonify({
+                'status': 'complete',
+                'result_gcs_path': result_gcs_path,
+                'server_params': server_parms_b64,
+                'cloud_processing_time_ms': processing_time,
+                'result_size_bytes': len(seal_bytes),
+                'compressed_size_bytes': len(compressed_data)
+            })
 
     except Exception as e:
         print(f"❌ Error processing GCS request: {str(e)}")
