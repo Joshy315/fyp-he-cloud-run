@@ -55,12 +55,6 @@ def compute_average():
     try:
         print("📦 Deserializing compressed parameters...")
         
-        # Log payload sizes for debugging
-        print(f"   parms size: {len(data['parms']) / 1024:.1f} KB")
-        print(f"   cipher_data size: {len(data['cipher_data']) / 1024:.1f} KB")
-        print(f"   galois_keys size: {len(data['galois_keys']) / 1024:.1f} KB")
-        print(f"   relin_keys size: {len(data['relin_keys']) / 1024:.1f} KB")
-        
         # Deserialize with decompression
         parms = deserialize_from_base64(data['parms'], EncryptionParameters, filename="temp_s_parms")
         context = SEALContext(parms)
@@ -90,7 +84,6 @@ def compute_average():
         # =====================================================================
         sum_cipher = Ciphertext(cloud_cipher)
         
-        # Binary tree reduction for efficiency
         rotation_steps = []
         power = 1
         while power < sample_size:
@@ -108,18 +101,29 @@ def compute_average():
         # =====================================================================
         # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
         # =====================================================================
-        scale = sum_cipher.scale()
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
-        division_plain = ckks_encoder.encode(division_vector, scale)
+
+        # ✅ FIX: We must encode the plaintext at the *same level* as the ciphertext.
+        # Get the parms_id (level) from the sum_cipher.
+        sum_cipher_parms_id = sum_cipher.parms_id()
+
+        # ✅ FIX: Encode the divisor with scale 1.0 AND at the correct level.
+        division_plain = ckks_encoder.encode(division_vector, sum_cipher_parms_id, 1.0)
         
-        print(f"   Dividing by {sample_size} (scale: {scale:.2e})")
+        print(f"   Dividing by {sample_size} (using scale=1.0 trick at correct level)")
         
+        # This will now work.
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
-        # Relinearize and rescale
+        # ✅ FIX: multiply_plain *does* increase the degree, so relinearization is required.
+        print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
-        evaluator.rescale_to_next_inplace(avg_cipher)
+
+        # ✅ Set the scale to match the input, as it should be unchanged.
+        avg_cipher.scale(sum_cipher.scale())
+        
+        print("   Division complete.")
         
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
