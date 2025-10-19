@@ -141,6 +141,11 @@ def compute_average_gcs():
 
         # STEP 5: Serialize result and upload to GCS
         print("📦 Serializing result...")
+        
+        # IMPORTANT: Check the parms_id before saving
+        print(f"   Result parms_id: {avg_cipher.parms_id()}")
+        print(f"   Context first parms_id: {context.first_parms_id()}")
+        
         local_result_file = "/tmp/result.enc"
         
         # Save the ciphertext to a temporary file first
@@ -152,9 +157,11 @@ def compute_average_gcs():
             seal_bytes = f.read()
         os.remove(temp_seal_file)
         
+        print(f"   SEAL result size: {len(seal_bytes)} bytes")
+        
         # Compress the SEAL binary
         compressed_data = zlib.compress(seal_bytes, level=9)
-        print(f"   Original: {len(seal_bytes)} bytes, Compressed: {len(compressed_data)} bytes")
+        print(f"   Compressed size: {len(compressed_data)} bytes")
         
         # Write compressed data to the upload file
         with open(local_result_file, 'wb') as f:
@@ -168,19 +175,14 @@ def compute_average_gcs():
         os.remove(local_result_file)
         
         print(f"✅ Result uploaded to {result_gcs_path}")
-
+        
         # STEP 6: Return GCS path of the result
         return jsonify({
             'status': 'complete',
             'result_gcs_path': result_gcs_path,
-            'cloud_processing_time_ms': processing_time
-        })
-
-        # STEP 6: Return GCS path of the result
-        return jsonify({
-            'status': 'complete',
-            'result_gcs_path': result_gcs_path,
-            'cloud_processing_time_ms': processing_time
+            'cloud_processing_time_ms': processing_time,
+            'result_size_bytes': len(seal_bytes),
+            'compressed_size_bytes': len(compressed_data)
         })
 
     except Exception as e:
