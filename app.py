@@ -104,13 +104,10 @@ def compute_average_gcs():
         if not context.parameters_set():
             return jsonify({'error': 'Invalid params'}), 400
         
-        # DEBUG: Print context information
+        # DEBUG: Print context information (removed incompatible methods)
         print(f"🔍 Server context info:")
         print(f"   Poly modulus degree: {parms.poly_modulus_degree()}")
         print(f"   Coeff modulus sizes: {[mod.bit_count() for mod in parms.coeff_modulus()]}")
-        print(f"   First parms_id: {context.first_parms_id()}")
-        print(f"   Key parms_id: {context.key_parms_id()}")
-        print(f"   Last parms_id: {context.last_parms_id()}")
         
         ckks_encoder = CKKSEncoder(context)
         evaluator = Evaluator(context)
