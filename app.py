@@ -162,18 +162,55 @@ def compute_average_gcs():
         
         print(f"✅ Result uploaded to {result_gcs_path}")
 
-        # STEP 6: Return GCS path of the result
-        return jsonify({
-            'status': 'complete',
-            'result_gcs_path': result_gcs_path,
-            'cloud_processing_time_ms': processing_time
-        })
+       # STEP 6: Download Result from GCS
+        result_gcs_path = cloud_response.get('result_gcs_path')
+        cloud_compute_time_ms = cloud_response.get('cloud_processing_time_ms', 0)
+        if not result_gcs_path: 
+            st.error(f"❌ Server didn't return result path: {cloud_response}")
+            st.stop()
+        
+        status_text.text(f"📥 Step 6/7: Downloading result from GCS...")
+        progress_bar.progress(70)
+        start_download = time.time()
+        result_bytes = download_from_gcs(result_gcs_path)
+        download_time_ms = (time.time() - start_download) * 1000
+        if result_bytes is None:
+            st.error("❌ GCS Download failed.")
+            st.stop()
+        st.info(f"⏱️ Download took {download_time_ms:.0f} ms")
 
-    except Exception as e:
-        print(f"❌ Error processing GCS request: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
+        # STEP 7: Decrypt Result
+        status_text.text("🔓 Step 7/7: Decrypting final result...")
+        progress_bar.progress(90)
+        start_dec = time.time()
+
+        # The result_bytes is compressed binary data - decompress it
+        try:
+            decompressed_bytes = zlib.decompress(result_bytes)
+        except Exception as e:
+            st.error(f"❌ Failed to decompress result: {e}")
+            st.stop()
+
+        # Write decompressed binary to file
+        with open("final_result_ct", 'wb') as f:
+            f.write(decompressed_bytes)
+
+        # Load the ciphertext
+        result_ct = Ciphertext()
+        result_ct.load(context, "final_result_ct")
+        os.remove("final_result_ct")
+
+        decryptor = Decryptor(context, secret_key)
+        result_plain = Plaintext()
+        decryptor.decrypt(result_ct, result_plain)
+        decrypted_values = encoder.decode(result_plain)
+        decrypted_avg = decrypted_values[0]
+        decryption_time_ms = (time.time() - start_dec) * 1000
+
+        progress_bar.progress(100)
+        status_text.text("✅ Computation complete!")
+        time.sleep(0.5)
+        status_container.empty()
 
 # --- Health check endpoint ---
 @app.route('/health', methods=['GET'])
