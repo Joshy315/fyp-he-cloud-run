@@ -142,14 +142,21 @@ def compute_average_gcs():
         # STEP 5: Serialize result and upload to GCS
         print("📦 Serializing result...")
         local_result_file = "/tmp/result.enc"
-        avg_cipher.save(local_result_file)
         
-        # Read the binary data and compress it
-        with open(local_result_file, 'rb') as f:
-            bytes_data = f.read()
-        compressed_data = zlib.compress(bytes_data, level=9)
+        # Save the ciphertext to a temporary file first
+        temp_seal_file = "/tmp/result_seal.bin"
+        avg_cipher.save(temp_seal_file)
         
-        # Write compressed binary to file for upload
+        # Read the SEAL binary data
+        with open(temp_seal_file, 'rb') as f:
+            seal_bytes = f.read()
+        os.remove(temp_seal_file)
+        
+        # Compress the SEAL binary
+        compressed_data = zlib.compress(seal_bytes, level=9)
+        print(f"   Original: {len(seal_bytes)} bytes, Compressed: {len(compressed_data)} bytes")
+        
+        # Write compressed data to the upload file
         with open(local_result_file, 'wb') as f:
             f.write(compressed_data)
         
@@ -161,6 +168,13 @@ def compute_average_gcs():
         os.remove(local_result_file)
         
         print(f"✅ Result uploaded to {result_gcs_path}")
+
+        # STEP 6: Return GCS path of the result
+        return jsonify({
+            'status': 'complete',
+            'result_gcs_path': result_gcs_path,
+            'cloud_processing_time_ms': processing_time
+        })
 
         # STEP 6: Return GCS path of the result
         return jsonify({
