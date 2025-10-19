@@ -109,7 +109,7 @@ def compute_average_gcs():
         # We get sample_size from the small request now, but could also include in large payload
         print(f"✅ Loaded. Computing average of {sample_size} values...")
 
-        # STEP 4: Perform HE Computation (Same logic as before)
+       # STEP 4: Perform HE Computation (Same logic as before)
         start_time = time.time()
         # --- Summation (Binary Tree) ---
         sum_cipher = Ciphertext(cloud_cipher); rotation_steps = []; power = 1
@@ -119,17 +119,14 @@ def compute_average_gcs():
             rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
             evaluator.add_inplace(sum_cipher, rotated)
         print(f"✅ Sum computed")
-        # --- Division (Scale=1.0 + ModSwitch) ---
+        # --- Division (Match Scale + Rescale) ---
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
-        division_plain = ckks_encoder.encode(division_vector, 1.0) # Encode at top level
-        sum_cipher_parms_id = sum_cipher.parms_id()
-        evaluator.mod_switch_to_inplace(division_plain, sum_cipher_parms_id) # Drop to match level
-        print(f"   Dividing by {sample_size} (using scale=1.0 trick at correct level)")
+        division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())  # Encode at CT scale (avoids zeroing)
+        print(f"   Dividing by {sample_size} (encoded at CT scale)")
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
-        print("   Relinearizing result...")
-        evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
-        avg_cipher.set_scale(sum_cipher.scale()) # ✅ FIXED: Use set_scale
+        print("   Rescaling to adjust scale...")
+        evaluator.rescale_to_inplace(avg_cipher)  # Drops 1 level; approximates / CT.scale
         print("   Division complete.")
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
