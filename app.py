@@ -104,20 +104,17 @@ def compute_average():
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
 
-        # Encode divisor at same scale as sum, then rescale after multiply
-        division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())
+        # Encode divisor with scale 1.0 to avoid scale explosion
+        division_plain = ckks_encoder.encode(division_vector, 1.0)
         
-        print(f"   Dividing by {sample_size} (encoded at same scale, will rescale)")
+        print(f"   Dividing by {sample_size} (encoded at scale=1.0)")
         
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
         print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
         
-        print("   Rescaling...")
-        evaluator.rescale_to_next_inplace(avg_cipher)
-        
-        print("   Division complete.")
+        print("   Division complete (no rescale needed).")
         
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
