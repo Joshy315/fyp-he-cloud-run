@@ -109,8 +109,24 @@ def compute_average():
         # DIVIDE BY SAMPLE_SIZE TO GET AVERAGE
         # =====================================================================
         scale = sum_cipher.scale()
+        
+        # ✅ CRITICAL: Check if we have enough levels left
+        context_data = context.get_context_data(sum_cipher.parms_id())
+        chain_index = context_data.chain_index()
+        
+        print(f"   Current chain index: {chain_index}")
+        print(f"   Current scale: {scale:.2e}")
+        
+        if chain_index == 0:
+            return jsonify({
+                'error': 'Not enough levels for division. Ciphertext already at lowest level.',
+                'type': 'LevelError'
+            }), 400
+        
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
+        
+        # ✅ Encode with current scale
         division_plain = ckks_encoder.encode(division_vector, scale)
         
         print(f"   Dividing by {sample_size} (scale: {scale:.2e})")
