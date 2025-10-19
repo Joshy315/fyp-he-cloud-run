@@ -80,11 +80,10 @@ def compute_average():
         start_time = time.time()
         
         # =====================================================================
-        # ✅ FIX: COMPUTE SUM USING EFFICIENT BINARY TREE ROTATION-AND-ADD
+        # COMPUTE SUM USING EFFICIENT BINARY TREE ROTATION-AND-ADD
         # =====================================================================
         sum_cipher = Ciphertext(cloud_cipher)
         
-        # Binary tree reduction for efficiency
         rotation_steps = []
         power = 1
         while power < sample_size:
@@ -93,10 +92,9 @@ def compute_average():
         
         print(f"   Using binary tree rotation steps: {rotation_steps}")
         
-        # Perform the log(N) rotations and additions
         for step in rotation_steps:
-            rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys) # Rotate the *running sum*
-            evaluator.add_inplace(sum_cipher, rotated) # Add back to the running sum
+            rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
+            evaluator.add_inplace(sum_cipher, rotated)
         
         print(f"✅ Sum computed via {len(rotation_steps)} rotations (binary tree)")
         
@@ -106,21 +104,28 @@ def compute_average():
         division_value = 1.0 / sample_size
         division_vector = np.full(slot_count, division_value, dtype=np.float64)
 
-        # Get the parms_id (level) from the sum_cipher.
+        # ✅ FIX: This is the correct way to match levels
+        # 1. Encode the divisor at the *top* level with scale 1.0
+        #    The encode function only takes the data and scale.
+        division_plain = ckks_encoder.encode(division_vector, 1.0) # Corrected line
+
+        # 2. Get the parms_id (level) from the sum_cipher
         sum_cipher_parms_id = sum_cipher.parms_id()
 
-        # Encode the divisor with scale 1.0 AND at the correct level.
-        division_plain = ckks_encoder.encode(division_vector, sum_cipher_parms_id, 1.0)
+        # 3. Drop the plaintext down to the same level as the ciphertext
+        print(f"   Mod-switching plaintext to match ciphertext level...")
+        evaluator.mod_switch_to_inplace(division_plain, sum_cipher_parms_id) # Correct method
         
         print(f"   Dividing by {sample_size} (using scale=1.0 trick at correct level)")
         
+        # This will now work
         avg_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
         
         # Relinearization is needed after multiply_plain
         print("   Relinearizing result...")
         evaluator.relinearize_inplace(avg_cipher, cloud_relin_keys)
 
-        # Set the scale to match the input, as it should be unchanged.
+        # Set the scale to match the input, as it should be unchanged
         avg_cipher.scale(sum_cipher.scale())
         
         print("   Division complete.")
