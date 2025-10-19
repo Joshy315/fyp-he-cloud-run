@@ -139,20 +139,29 @@ def compute_average_gcs():
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ Average computed in {processing_time:.2f} ms")
 
-        # STEP 5: Serialize, Save locally, Upload result to GCS
+        # STEP 5: Serialize result and upload to GCS
+        print("📦 Serializing result...")
+        # Save the ciphertext directly to binary file (compressed)
         local_result_file = "/tmp/result.enc"
-        result_b64 = serialize_to_base64(avg_cipher, local_result_file)
-
-        # Need the bucket name - extract from input or use env var
+        avg_cipher.save(local_result_file)
+        
+        # Read the binary data and compress it
+        with open(local_result_file, 'rb') as f:
+            bytes_data = f.read()
+        compressed_data = zlib.compress(bytes_data, level=9)
+        
+        # Write compressed binary to file for upload
+        with open(local_result_file, 'wb') as f:
+            f.write(compressed_data)
+        
+        # Upload the compressed binary file
         bucket_name = gcs_payload_path.split('/')[2]
         result_blob_name = f"he_results/{os.path.basename(gcs_payload_path).replace('_payload.json', '_result.enc')}"
-
-        # Save the base64 string to a file to upload
-        with open(local_result_file, 'w') as f:
-             f.write(result_b64)
-
+        
         result_gcs_path = upload_result_to_gcs(bucket_name, local_result_file, result_blob_name)
         os.remove(local_result_file)
+        
+        print(f"✅ Result uploaded to {result_gcs_path}")
 
         # STEP 6: Return GCS path of the result
         return jsonify({
