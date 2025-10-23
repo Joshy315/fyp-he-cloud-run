@@ -64,52 +64,60 @@ def upload_result_to_gcs(bucket_name, source_file_name, destination_blob_name):
         print(f"❌ GCS Upload Failed: {e}")
         raise
 
-# ✅ Endpoint for GCS workflow
+# ✅ Endpoint for GCS workflow - SUPPORTS MULTIPLE OPERATIONS
 @app.route('/compute_average_gcs', methods=['POST'])
 def compute_average_gcs():
-    """Handles HE computation - supports average and sum operations"""
+    """
+    Handles HE computation request where payload is in GCS.
+    Supports operations: 'average' and 'sum'
+    """
     small_request_data = request.json
     gcs_payload_path = small_request_data.get('gcs_payload_path')
     sample_size = small_request_data.get('sample_size', 0)
-    operation = small_request_data.get('operation', 'average')  # 'average' or 'sum'
+    operation = small_request_data.get('operation', 'average')  # NEW: operation type
 
     if not gcs_payload_path:
         return jsonify({'error': 'Missing gcs_payload_path in request'}), 400
 
+    print(f"🔍 Received request: operation={operation}, sample_size={sample_size}")
+
     try:
-        # STEP 1-3: Download and deserialize (same as before)
+        # STEP 1: Download the large payload file from GCS
         local_payload_file = download_payload_from_gcs(gcs_payload_path)
-        
+
+        # STEP 2: Load the payload content from the downloaded file
         print("📦 Loading payload from downloaded file...")
         with open(local_payload_file, 'r') as f:
             payload = json.load(f)
         os.remove(local_payload_file)
-        
+        print("✅ Payload loaded.")
+
+        # STEP 3: Deserialize parameters and keys
         print("📦 Deserializing parameters from payload...")
-        parms = deserialize_from_base64(payload['parms'], EncryptionParameters, 
-                                       filename="temp_s_parms", is_compressed=False)
+        parms = deserialize_from_base64(payload['parms'], EncryptionParameters, filename="temp_s_parms", is_compressed=False)
         context = SEALContext(parms)
         if not context.parameters_set():
             return jsonify({'error': 'Invalid params'}), 400
+        
+        print(f"🔍 Server context info:")
+        print(f"   Poly modulus degree: {parms.poly_modulus_degree()}")
+        print(f"   Coeff modulus sizes: {[mod.bit_count() for mod in parms.coeff_modulus()]}")
         
         ckks_encoder = CKKSEncoder(context)
         evaluator = Evaluator(context)
         slot_count = ckks_encoder.slot_count()
         print(f"✅ Context created. Slot count: {slot_count}")
 
-        print("🔑 Loading encrypted data and keys...")
-        cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, 
-                                              context, "temp_s_cipher", is_compressed=True)
-        cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, 
-                                                    context, "temp_s_galois", is_compressed=True)
-        cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, 
-                                                   context, "temp_s_relin", is_compressed=True)
-        print(f"✅ Loaded. Operation: {operation}, Sample size: {sample_size}")
+        print("🔑 Loading encrypted data and keys from payload...")
+        cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, context, "temp_s_cipher", is_compressed=True)
+        cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, context, "temp_s_galois", is_compressed=True)
+        cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, context, "temp_s_relin", is_compressed=True)
+        print(f"✅ Loaded. Computing {operation} of {sample_size} values...")
 
         # STEP 4: Perform HE Computation
         start_time = time.time()
         
-        # --- Summation (Binary Tree) ---
+        # --- Summation (Binary Tree) - ALWAYS NEEDED ---
         sum_cipher = Ciphertext(cloud_cipher)
         rotation_steps = []
         power = 1
@@ -122,25 +130,32 @@ def compute_average_gcs():
             evaluator.add_inplace(sum_cipher, rotated)
         print(f"✅ Sum computed")
         
+        # --- Operation-Specific Processing ---
         if operation == "average":
-            # --- Division for Average ---
+            # Division for Average
             division_value = 1.0 / sample_size
             division_vector = np.full(slot_count, division_value, dtype=np.float64)
             division_plain = ckks_encoder.encode(division_vector, sum_cipher.scale())
-            print(f"   Dividing by {sample_size}")
+            print(f"   Dividing by {sample_size} (encoded at CT scale)")
             result_cipher = evaluator.multiply_plain(sum_cipher, division_plain)
-            print("   Rescaling...")
+            print("   Rescaling result...")
             evaluator.rescale_to_next_inplace(result_cipher)
-            print("   Average complete")
-        else:  # operation == "sum"
+            print("   Average computation complete.")
+        elif operation == "sum":
+            # Just use the sum directly
             result_cipher = sum_cipher
-            print("   Sum complete (no division)")
+            print("   Sum computation complete (no division).")
+        else:
+            return jsonify({'error': f'Unknown operation: {operation}'}), 400
         
+        # Calculate processing time
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ {operation.capitalize()} computed in {processing_time:.2f} ms")
 
-        # STEP 5-6: Serialize and return (same as before)
-        print("📦 Serializing result...")
+        # STEP 5: Serialize result using the SAME context
+        print("📦 Serializing result with context...")
+        
+        # Save result ciphertext
         temp_seal_file = "/tmp/result_seal.bin"
         result_cipher.save(temp_seal_file)
         
@@ -148,20 +163,53 @@ def compute_average_gcs():
             seal_bytes = f.read()
         os.remove(temp_seal_file)
         
+        print(f"   Result size: {len(seal_bytes)} bytes")
+        
+        # Compress and encode
         compressed_data = zlib.compress(seal_bytes, level=9)
         result_b64 = base64.b64encode(compressed_data).decode('utf-8')
         
-        print(f"✅ Result serialized ({len(compressed_data)} bytes compressed)")
+        print(f"   Compressed: {len(compressed_data)} bytes")
+        print(f"   Base64: {len(result_b64)} chars")
+        print(f"✅ Result serialized")
 
-        return jsonify({
-            'status': 'complete',
-            'result_data': result_b64,
-            'cloud_processing_time_ms': processing_time,
-            'operation': operation
-        })
+        # STEP 6: Return result - client will use its OWN parms to create matching context
+        total_size = len(result_b64)
+        
+        if total_size < 30_000_000:  # 30MB limit
+            print(f"   Returning result directly")
+            return jsonify({
+                'status': 'complete',
+                'result_data': result_b64,
+                'cloud_processing_time_ms': processing_time,
+                'result_size_bytes': len(seal_bytes),
+                'compressed_size_bytes': len(compressed_data),
+                'operation': operation,  # Echo back the operation
+                'use_client_context': True
+            })
+        else:
+            print(f"   Uploading to GCS...")
+            local_result_file = "/tmp/result.enc"
+            with open(local_result_file, 'wb') as f:
+                f.write(compressed_data)
+            
+            bucket_name = gcs_payload_path.split('/')[2]
+            result_blob_name = f"he_results/{os.path.basename(gcs_payload_path).replace('_payload.json', '_result.enc')}"
+            result_gcs_path = upload_result_to_gcs(bucket_name, local_result_file, result_blob_name)
+            os.remove(local_result_file)
+            
+            return jsonify({
+                'status': 'complete',
+                'result_gcs_path': result_gcs_path,
+                'cloud_processing_time_ms': processing_time,
+                'result_size_bytes': len(seal_bytes),
+                'compressed_size_bytes': len(compressed_data),
+                'operation': operation,
+                'use_client_context': True
+            })
 
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f"❌ Error processing GCS request: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e), 'type': type(e).__name__}), 500
@@ -174,7 +222,8 @@ def health_check():
         return jsonify({
             'status': 'healthy',
             'seal_available': True,
-            'compression_enabled': True
+            'compression_enabled': True,
+            'supported_operations': ['average', 'sum']
         }), 200
     except Exception as e:
         return jsonify({
@@ -186,4 +235,5 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
     print(f"🚀 Starting server on port {port}...")
     print(f"✅ GCS Integration Enabled")
+    print(f"✅ Supported operations: average, sum")
     app.run(debug=False, host='0.0.0.0', port=port)
