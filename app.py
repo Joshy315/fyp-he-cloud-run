@@ -64,7 +64,7 @@ def upload_result_to_gcs(bucket_name, source_file_name, destination_blob_name):
         print(f"❌ GCS Upload Failed: {e}")
         raise
 
-# ✅ Endpoint for GCS workflow - SUPPORTS MULTIPLE OPERATIONS
+# ✅ Main Endpoint - Supports multiple operations
 @app.route('/compute_average_gcs', methods=['POST'])
 def compute_average_gcs():
     """
@@ -74,12 +74,12 @@ def compute_average_gcs():
     small_request_data = request.json
     gcs_payload_path = small_request_data.get('gcs_payload_path')
     sample_size = small_request_data.get('sample_size', 0)
-    operation = small_request_data.get('operation', 'average')  # NEW: operation type
+    operation = small_request_data.get('operation', 'average')
 
     if not gcs_payload_path:
         return jsonify({'error': 'Missing gcs_payload_path in request'}), 400
 
-    print(f"🔍 Received request: operation={operation}, sample_size={sample_size}")
+    print(f"🔍 Request received: operation={operation}, sample_size={sample_size}")
 
     try:
         # STEP 1: Download the large payload file from GCS
@@ -94,7 +94,8 @@ def compute_average_gcs():
 
         # STEP 3: Deserialize parameters and keys
         print("📦 Deserializing parameters from payload...")
-        parms = deserialize_from_base64(payload['parms'], EncryptionParameters, filename="temp_s_parms", is_compressed=False)
+        parms = deserialize_from_base64(payload['parms'], EncryptionParameters, 
+                                       filename="temp_s_parms", is_compressed=False)
         context = SEALContext(parms)
         if not context.parameters_set():
             return jsonify({'error': 'Invalid params'}), 400
@@ -109,21 +110,25 @@ def compute_average_gcs():
         print(f"✅ Context created. Slot count: {slot_count}")
 
         print("🔑 Loading encrypted data and keys from payload...")
-        cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, context, "temp_s_cipher", is_compressed=True)
-        cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, context, "temp_s_galois", is_compressed=True)
-        cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, context, "temp_s_relin", is_compressed=True)
+        cloud_cipher = deserialize_from_base64(payload['cipher_data'], Ciphertext, 
+                                              context, "temp_s_cipher", is_compressed=True)
+        cloud_galois_keys = deserialize_from_base64(payload['galois_keys'], GaloisKeys, 
+                                                    context, "temp_s_galois", is_compressed=True)
+        cloud_relin_keys = deserialize_from_base64(payload['relin_keys'], RelinKeys, 
+                                                   context, "temp_s_relin", is_compressed=True)
         print(f"✅ Loaded. Computing {operation} of {sample_size} values...")
 
         # STEP 4: Perform HE Computation
         start_time = time.time()
         
-        # --- Summation (Binary Tree) - ALWAYS NEEDED ---
+        # --- Summation (Binary Tree) - ALWAYS REQUIRED ---
         sum_cipher = Ciphertext(cloud_cipher)
         rotation_steps = []
         power = 1
         while power < sample_size:
             rotation_steps.append(power)
             power *= 2
+        
         print(f"   Using binary tree rotation steps: {rotation_steps}")
         for step in rotation_steps:
             rotated = evaluator.rotate_vector(sum_cipher, step, cloud_galois_keys)
@@ -142,7 +147,7 @@ def compute_average_gcs():
             evaluator.rescale_to_next_inplace(result_cipher)
             print("   Average computation complete.")
         elif operation == "sum":
-            # Just use the sum directly
+            # Just use the sum directly (no division needed)
             result_cipher = sum_cipher
             print("   Sum computation complete (no division).")
         else:
@@ -152,10 +157,8 @@ def compute_average_gcs():
         processing_time = (time.time() - start_time) * 1000
         print(f"✅ {operation.capitalize()} computed in {processing_time:.2f} ms")
 
-        # STEP 5: Serialize result using the SAME context
-        print("📦 Serializing result with context...")
-        
-        # Save result ciphertext
+        # STEP 5: Serialize result
+        print("📦 Serializing result...")
         temp_seal_file = "/tmp/result_seal.bin"
         result_cipher.save(temp_seal_file)
         
@@ -173,22 +176,23 @@ def compute_average_gcs():
         print(f"   Base64: {len(result_b64)} chars")
         print(f"✅ Result serialized")
 
-        # STEP 6: Return result - client will use its OWN parms to create matching context
+        # STEP 6: Return result
         total_size = len(result_b64)
         
         if total_size < 30_000_000:  # 30MB limit
-            print(f"   Returning result directly")
+            print(f"   Returning result directly (size: {total_size/1024:.1f} KB)")
             return jsonify({
                 'status': 'complete',
                 'result_data': result_b64,
                 'cloud_processing_time_ms': processing_time,
                 'result_size_bytes': len(seal_bytes),
                 'compressed_size_bytes': len(compressed_data),
-                'operation': operation,  # Echo back the operation
+                'operation': operation,
                 'use_client_context': True
             })
         else:
-            print(f"   Uploading to GCS...")
+            # If result is too large, upload to GCS
+            print(f"   Result too large, uploading to GCS...")
             local_result_file = "/tmp/result.enc"
             with open(local_result_file, 'wb') as f:
                 f.write(compressed_data)
@@ -217,13 +221,22 @@ def compute_average_gcs():
 # --- Health check endpoint ---
 @app.route('/health', methods=['GET'])
 def health_check():
+    """Health check endpoint for monitoring"""
     try:
         from seal import EncryptionParameters, scheme_type
         return jsonify({
             'status': 'healthy',
             'seal_available': True,
             'compression_enabled': True,
-            'supported_operations': ['average', 'sum']
+            'supported_operations': ['average', 'sum'],
+            'version': '2.0',
+            'features': [
+                'Homomorphic Encryption (CKKS)',
+                'GCS Integration',
+                'Multi-operation support',
+                'Binary tree aggregation',
+                'Automatic rescaling'
+            ]
         }), 200
     except Exception as e:
         return jsonify({
@@ -231,9 +244,50 @@ def health_check():
             'error': str(e)
         }), 500
 
+# --- Root endpoint ---
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint with API information"""
+    return jsonify({
+        'service': 'SecureHealth Analytics - HE Computation Service',
+        'version': '2.0',
+        'endpoints': {
+            '/health': 'Health check',
+            '/compute_average_gcs': 'Main computation endpoint (POST)'
+        },
+        'supported_operations': [
+            {
+                'name': 'average',
+                'description': 'Compute encrypted average of values',
+                'use_case': 'Heart rate monitoring, SpO2 analysis, stress analysis'
+            },
+            {
+                'name': 'sum',
+                'description': 'Compute encrypted sum of values',
+                'use_case': 'Critical event counting, multi-metric scoring'
+            }
+        ],
+        'features': [
+            'Microsoft SEAL (CKKS scheme)',
+            'Google Cloud Storage integration',
+            'Zlib compression',
+            'Binary tree aggregation for efficiency',
+            'Support for 8192-bit polynomial modulus'
+        ],
+        'author': 'Haziq Mirza',
+        'institution': 'UiTM'
+    }), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
-    print(f"🚀 Starting server on port {port}...")
-    print(f"✅ GCS Integration Enabled")
-    print(f"✅ Supported operations: average, sum")
+    print("=" * 60)
+    print("🚀 SecureHealth Analytics - HE Computation Service")
+    print("=" * 60)
+    print(f"🌐 Starting server on port {port}...")
+    print(f"✅ GCS Integration: Enabled")
+    print(f"✅ Compression: Enabled (zlib)")
+    print(f"✅ Supported Operations: average, sum")
+    print(f"✅ SEAL Version: 4.1.1")
+    print(f"✅ Scheme: CKKS")
+    print("=" * 60)
     app.run(debug=False, host='0.0.0.0', port=port)
